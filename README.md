@@ -1,63 +1,101 @@
-# Next + Netlify Starter
+# Altitutor Student Portal
 
-[![Netlify Status](https://api.netlify.com/api/v1/badges/46648482-644c-4c80-bafb-872057e51b6b/deploy-status)](https://app.netlify.com/sites/next-dev-starter/deploys)
+A streamlined student onboarding and management system built with Next.js and Supabase.
 
-This is a [Next.js](https://nextjs.org/) v15 project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app) and set up to be instantly deployed to [Netlify](https://url.netlify.com/SyTBPVamO)!
+## Overview
 
-This project is a very minimal starter that includes 2 sample components, a global stylesheet, a `netlify.toml` for deployment, and a `jsconfig.json` for setting up absolute imports and aliases. With Netlify, you'll have access to features like Preview Mode, server-side rendering/incremental static regeneration via Netlify Functions, and internationalized routing on deploy automatically.
+The Altitutor Student Portal is designed to make student registration and management easier by:
 
-[![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/netlify-templates/next-netlify-starter&utm_source=github&utm_medium=nextstarter-cs&utm_campaign=devex-cs)
+- Allowing students to register and create accounts
+- Collecting student and parent information
+- Enabling students to select their subjects of interest
+- Automatically creating tasks for admins to assign classes
+- Seamlessly integrating with the admin backend
 
-(If you click this button, it will create a new repo for you that looks exactly like this one, and sets that repo up immediately for deployment on Netlify)
+## Features
 
-## Table of Contents:
+- **User Authentication**: Secure signup and login using Supabase Auth
+- **Onboarding Flow**: Multi-step registration process for students
+- **Subject Selection**: Students can browse and select subjects
+- **Profile Management**: Students can view and update their information
+- **Class Assignment**: Admin notification when new students register
+- **Dashboard**: Students can see their enrolled subjects and assigned classes
 
-- [Getting Started](#getting-started)
-- [Installation options](#installation-options)
-- [Testing](#testing)
-  - [Included Default Testing](#included-default-testing)
-  - [Removing Renovate](#removing-renovate)
+## Tech Stack
+
+- **Frontend**: Next.js with React
+- **Styling**: Tailwind CSS
+- **Authentication**: Supabase Auth
+- **Database**: Supabase PostgreSQL
+- **Deployment**: Netlify
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
 
+- Node.js (v14 or later)
+- npm or yarn
+
+### Installation
+
+1. Clone the repository
+```bash
+git clone https://github.com/your-username/alti-student.git
+cd alti-student
+```
+
+2. Install dependencies
+```bash
+npm install
+# or
+yarn install
+```
+
+3. Set up environment variables
+Create a `.env.local` file in the root directory and add:
+```
+NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+```
+
+4. Run the development server
 ```bash
 npm run dev
 # or
 yarn dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+5. Open [http://localhost:3000](http://localhost:3000) in your browser to see the application
 
-You can start editing the page by modifying `pages/index.js`. The page auto-updates as you edit the file.
+## Deployment
 
-### Installation options
+This project is configured for deployment on Netlify. Simply connect your GitHub repository to Netlify and it will automatically deploy when changes are pushed to the main branch.
 
-**Option one:** One-click deploy
+## Project Structure
 
-[![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/netlify-templates/next-netlify-starter&utm_source=github&utm_medium=nextstarter-cs&utm_campaign=devex-cs)
+- `/components`: Reusable UI components
+- `/pages`: Next.js pages and routes
+- `/pages/onboarding`: Multi-step onboarding flow
+- `/utils`: Helper functions and Supabase client
+- `/styles`: Global styles and Tailwind configuration
 
-**Option two:** Manual clone
+## Database Schema
 
-1. Clone this repo: `git clone https://github.com/netlify-templates/next-netlify-starter.git`
-2. Navigate to the directory and run `npm install`
-3. Run `npm run dev`
-4. Make your changes
-5. Connect to [Netlify](https://url.netlify.com/Bk4UicocL) manually (the `netlify.toml` file is the one you'll need to make sure stays intact to make sure the export is done and pointed to the right stuff)
+The database includes the following key tables:
 
-## Testing
+- `students`: Student information and parent details
+- `subjects`: Available subjects for selection
+- `students_subjects`: Join table linking students to their selected subjects
+- `tasks`: Admin tasks created during the onboarding process
 
-### Included Default Testing
+## Future Enhancements
 
-We’ve included some tooling that helps us maintain these templates. This template currently uses:
+- Student billing integration
+- SMS/Email notifications
+- Schedule viewing
+- Homework submission
+- Progress tracking
 
-- [Renovate](https://www.mend.io/free-developer-tools/renovate/) - to regularly update our dependencies
-- [Cypress](https://www.cypress.io/) - to run tests against how the template runs in the browser
-- [Cypress Netlify Build Plugin](https://github.com/cypress-io/netlify-plugin-cypress) - to run our tests during our build process
+## License
 
-If your team is not interested in this tooling, you can remove them with ease!
-
-### Removing Renovate
-
-In order to keep our project up-to-date with dependencies we use a tool called [Renovate](https://github.com/marketplace/renovate). If you’re not interested in this tooling, delete the `renovate.json` file and commit that onto your main branch.
+This project is licensed under the MIT License - see the LICENSE file for details.
