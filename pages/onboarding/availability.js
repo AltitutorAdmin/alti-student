@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
-import { useSupabaseClient } from '@supabase/auth-helpers-react'
+import { useSupabaseClient, useSession } from '@supabase/auth-helpers-react'
 import Head from 'next/head'
 import Link from 'next/link'
 
 export default function Availability() {
   const router = useRouter()
   const supabase = useSupabaseClient()
+  const session = useSession()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [userId, setUserId] = useState(null)
@@ -23,21 +24,70 @@ export default function Availability() {
     availability_sunday_pm: false
   })
 
-  // Load user ID and student ID from localStorage
+  // Load user ID and student ID from localStorage or session
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const storedUserId = localStorage.getItem('onboardingUserId')
+      // Use session user ID if available
+      const currentUserId = session?.user?.id || localStorage.getItem('onboardingUserId')
       const storedStudentId = localStorage.getItem('onboardingStudentId')
       
-      if (!storedUserId || !storedStudentId) {
+      if (!currentUserId || !storedStudentId) {
         router.push('/onboarding')
         return
       }
       
-      setUserId(storedUserId)
+      setUserId(currentUserId)
       setStudentId(storedStudentId)
+      
+      // Fetch existing availability settings
+      const fetchAvailability = async () => {
+        try {
+          const { data, error } = await supabase
+            .from('students')
+            .select(`
+              availability_monday,
+              availability_tuesday,
+              availability_wednesday,
+              availability_thursday,
+              availability_friday,
+              availability_saturday_am,
+              availability_saturday_pm,
+              availability_sunday_am,
+              availability_sunday_pm
+            `)
+            .eq('id', storedStudentId)
+            .single()
+            
+          if (error) {
+            console.error('Error fetching availability:', error)
+            return
+          }
+          
+          if (data) {
+            // Filter out null values and set availability state
+            const availabilityData = {}
+            for (const key in data) {
+              if (data[key] !== null) {
+                availabilityData[key] = !!data[key] // Convert to boolean
+              }
+            }
+            
+            if (Object.keys(availabilityData).length > 0) {
+              setAvailability(prev => ({
+                ...prev,
+                ...availabilityData
+              }))
+              console.log('Loaded existing availability settings')
+            }
+          }
+        } catch (err) {
+          console.error('Error in fetchAvailability:', err)
+        }
+      }
+      
+      fetchAvailability()
     }
-  }, [router])
+  }, [router, session, supabase])
 
   const handleToggleAvailability = (field) => {
     setAvailability(prev => ({
@@ -71,7 +121,7 @@ export default function Availability() {
       console.log('Availability updated successfully')
       
       // Redirect to registration complete page
-      router.push('/registration-complete')
+      router.push('/onboarding/complete')
     } catch (error) {
       console.error('Error saving availability:', error)
       setError(error.message)

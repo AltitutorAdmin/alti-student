@@ -73,29 +73,46 @@ export default function Dashboard() {
           if (subjectsError) throw subjectsError
           setSubjects(subjectsData || [])
           
+          // If no subjects are selected, redirect to subject selection
+          if (!subjectsData || subjectsData.length === 0) {
+            console.log('No subjects selected, redirecting to subject selection...');
+            // Store student ID in localStorage for the onboarding flow
+            localStorage.setItem('onboardingStudentId', studentData.id);
+            localStorage.setItem('onboardingUserId', session.user.id);
+            
+            // Redirect to subject selection page
+            router.push('/onboarding/subject-selection');
+            return;
+          }
+          
           // Set selected subject IDs for the edit mode
           setSelectedSubjectIds(subjectsData ? subjectsData.map(item => item.subject_id) : [])
           
           // Fetch assigned classes
           const { data: classesData, error: classesError } = await supabase
-            .from('classes_students')
-            .select(`
-              id, 
-              status,
-              classes:class_id (
-                id,
-                subject,
-                day_of_week,
-                start_time,
-                end_time,
-                room,
-                status
-              )
-            `)
-            .eq('student_id', studentData.id)
+            .rpc('get_student_classes', {
+              p_student_id: studentData.id
+            })
           
-          if (classesError) throw classesError
-          setClasses(classesData || [])
+          if (classesError) {
+            console.error('Error fetching classes with RPC function:', classesError);
+            
+            // Fallback to the student_classes_view directly if RPC fails
+            try {
+              const { data: viewData, error: viewError } = await supabase
+                .from('student_classes_view')
+                .select('*')
+                .eq('student_id', studentData.id);
+                
+              if (viewError) throw viewError;
+              setClasses(viewData || []);
+            } catch (fallbackError) {
+              console.error('Error with fallback classes query:', fallbackError);
+              throw fallbackError;
+            }
+          } else {
+            setClasses(classesData || []);
+          }
         }
       } catch (error) {
         console.error('Error fetching student data:', error)
@@ -106,7 +123,7 @@ export default function Dashboard() {
     }
 
     fetchData()
-  }, [session, supabase])
+  }, [session, supabase, router])
 
   // Add a function to fetch available subjects based on student's curriculum and year level
   const fetchAvailableSubjects = async () => {
@@ -844,27 +861,25 @@ export default function Dashboard() {
                   </div>
                 ) : (
                   <ul className="divide-y divide-gray-200">
-                    {classes.map((enrollment) => (
-                      enrollment.classes && (
-                        <li key={enrollment.id} className="py-3 first:pt-0 last:pb-0">
-                          <h3 className="font-medium text-gray-800">{enrollment.classes.subject}</h3>
-                          <p className="text-sm text-gray-600">
-                            {getDayOfWeek(enrollment.classes.day_of_week)} {enrollment.classes.start_time} - {enrollment.classes.end_time}
-                          </p>
-                          {enrollment.classes.room && (
-                            <p className="text-sm text-gray-500">Room: {enrollment.classes.room}</p>
-                          )}
-                          <div className="mt-1">
-                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                              enrollment.status === 'ACTIVE' ? 'bg-green-100 text-green-800' :
-                              enrollment.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
-                              'bg-gray-100 text-gray-800'
-                            }`}>
-                              {enrollment.status}
-                            </span>
-                          </div>
-                        </li>
-                      )
+                    {classes.map((classItem) => (
+                      <li key={classItem.id} className="py-3 first:pt-0 last:pb-0">
+                        <h3 className="font-medium text-gray-800">{classItem.subject_name}</h3>
+                        <p className="text-sm text-gray-600">
+                          {getDayOfWeek(classItem.day_of_week)} {classItem.start_time} - {classItem.end_time}
+                        </p>
+                        {classItem.room && (
+                          <p className="text-sm text-gray-500">Room: {classItem.room}</p>
+                        )}
+                        <div className="mt-1">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            classItem.status === 'ACTIVE' ? 'bg-green-100 text-green-800' :
+                            classItem.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-gray-100 text-gray-800'
+                          }`}>
+                            {classItem.status}
+                          </span>
+                        </div>
+                      </li>
                     ))}
                   </ul>
                 )}

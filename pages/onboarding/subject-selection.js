@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
-import { useSupabaseClient } from '@supabase/auth-helpers-react'
+import { useSupabaseClient, useSession } from '@supabase/auth-helpers-react'
 import Head from 'next/head'
 import Link from 'next/link'
 
 export default function SubjectSelection() {
   const router = useRouter()
   const supabase = useSupabaseClient()
+  const session = useSession()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [userId, setUserId] = useState(null)
@@ -16,25 +17,31 @@ export default function SubjectSelection() {
   const [subjects, setSubjects] = useState([])
   const [filteredSubjects, setFilteredSubjects] = useState([])
   const [selectedSubjects, setSelectedSubjects] = useState([])
+  const [isFromDashboard, setIsFromDashboard] = useState(false)
 
-  // Load user ID and student ID from localStorage
+  // Load user ID and student ID from localStorage or session
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const storedUserId = localStorage.getItem('onboardingUserId')
+      // Check if we came from dashboard by looking at referrer
+      const referrer = document.referrer;
+      setIsFromDashboard(referrer && referrer.includes('/dashboard'));
+      
+      // Use session user ID if available
+      const currentUserId = session?.user?.id || localStorage.getItem('onboardingUserId')
       const storedStudentId = localStorage.getItem('onboardingStudentId')
       
-      if (!storedUserId || !storedStudentId) {
+      if (!currentUserId || !storedStudentId) {
         router.push('/onboarding')
         return
       }
       
-      setUserId(storedUserId)
+      setUserId(currentUserId)
       setStudentId(storedStudentId)
       
       // Fetch student data to get curriculum and year level
       fetchStudentData(storedStudentId)
     }
-  }, [router])
+  }, [router, session])
 
   // Fetch student data
   const fetchStudentData = async (id) => {
@@ -49,6 +56,31 @@ export default function SubjectSelection() {
       
       setCurriculum(data.curriculum)
       setYearLevel(data.year_level)
+      
+      // Immediately try to fetch subjects with the correct curriculum/year
+      if (data.curriculum && data.year_level) {
+        console.log('Got student data, fetching subjects for:', {
+          curriculum: data.curriculum,
+          yearLevel: data.year_level
+        });
+        
+        // Try fetching via RPC
+        const { data: subjectData, error: subjectError } = await supabase.rpc(
+          'get_subjects_for_student',
+          {
+            p_curriculum: data.curriculum,
+            p_year_level: parseInt(data.year_level)
+          }
+        );
+        
+        if (subjectError) {
+          console.error('Error fetching subjects via RPC after student data load:', subjectError);
+        } else {
+          console.log(`Fetched ${subjectData?.length || 0} subjects via RPC after student data load`);
+          setSubjects(subjectData || []);
+          setFilteredSubjects(subjectData || []);
+        }
+      }
     } catch (error) {
       console.error('Error fetching student data:', error)
       setError('Failed to load student data. Please try again.')
@@ -59,13 +91,59 @@ export default function SubjectSelection() {
   useEffect(() => {
     async function fetchSubjects() {
       try {
+        console.log('Fetching subjects...');
         const { data, error } = await supabase
           .from('subjects')
           .select('*')
           .order('name', { ascending: true })
 
-        if (error) throw error
+        if (error) {
+          console.error('Error fetching subjects via direct table access:', error);
+          
+          // If direct access fails, try using the RPC function
+          if (curriculum && yearLevel) {
+            console.log('Trying alternative method using RPC function...');
+            const { data: rpcData, error: rpcError } = await supabase.rpc(
+              'get_subjects_for_student',
+              {
+                p_curriculum: curriculum,
+                p_year_level: parseInt(yearLevel)
+              }
+            );
+            
+            if (rpcError) {
+              console.error('Error fetching subjects via RPC:', rpcError);
+              throw rpcError;
+            }
+            
+            console.log(`Successfully fetched ${rpcData?.length || 0} subjects via RPC`);
+            setSubjects(rpcData || []);
+            // Since we already filtered by curriculum and year level in the RPC
+            setFilteredSubjects(rpcData || []);
+            return;
+          } else {
+            throw error;
+          }
+        }
+        
+        console.log(`Successfully fetched ${data?.length || 0} subjects`);
         setSubjects(data || [])
+        
+        // Check for existing subject selections
+        if (studentId) {
+          const { data: existingSelections, error: selectionsError } = await supabase
+            .from('students_subjects')
+            .select('subject_id')
+            .eq('student_id', studentId)
+            
+          if (selectionsError) {
+            console.error('Error fetching existing subject selections:', selectionsError)
+          } else if (existingSelections && existingSelections.length > 0) {
+            const selectedIds = existingSelections.map(selection => selection.subject_id)
+            setSelectedSubjects(selectedIds)
+            console.log('Loaded existing subject selections:', selectedIds)
+          }
+        }
       } catch (error) {
         console.error('Error fetching subjects:', error)
         setError('Failed to load subjects. Please try again.')
@@ -75,19 +153,33 @@ export default function SubjectSelection() {
     if (userId) {
       fetchSubjects()
     }
-  }, [userId, supabase])
+  }, [userId, studentId, curriculum, yearLevel, supabase])
 
   // Filter subjects based on curriculum and year level
   useEffect(() => {
     if (curriculum && yearLevel) {
+      console.log('Filtering subjects:', { 
+        curriculum, 
+        yearLevel,
+        totalSubjects: subjects.length,
+        availableCurriculums: [...new Set(subjects.map(s => s.curriculum))],
+        availableYearLevels: [...new Set(subjects.map(s => s.year_level))]
+      });
+      
       const filtered = subjects.filter(
-        (subject) => 
-          subject.curriculum === curriculum && 
-          subject.year_level === parseInt(yearLevel)
-      )
-      setFilteredSubjects(filtered)
+        (subject) => {
+          // Case-insensitive curriculum comparison and ensure year_level is treated as a number
+          const curriculumMatch = subject.curriculum?.toUpperCase() === curriculum?.toUpperCase();
+          const yearLevelMatch = subject.year_level === parseInt(yearLevel);
+          
+          return curriculumMatch && yearLevelMatch;
+        }
+      );
+      
+      console.log(`Found ${filtered.length} subjects matching ${curriculum} year ${yearLevel}`);
+      setFilteredSubjects(filtered);
     } else {
-      setFilteredSubjects([])
+      setFilteredSubjects([]);
     }
   }, [curriculum, yearLevel, subjects])
 
@@ -111,39 +203,43 @@ export default function SubjectSelection() {
     setError(null)
 
     try {
-      // Add selected subjects
-      const subjectRecords = selectedSubjects.map(subjectId => ({
-        student_id: studentId,
-        subject_id: subjectId
-      }))
+      console.log('Submitting subjects:', {
+        studentId,
+        selectedSubjects: selectedSubjects.length,
+        subjectIds: selectedSubjects
+      });
       
-      const { error: subjectsError } = await supabase
-        .from('students_subjects')
-        .insert(subjectRecords)
-
-      if (subjectsError) throw subjectsError
-
-      // Create a task for admin to assign classes
-      const { error: taskError } = await supabase
-        .from('tasks')
-        .insert({
-          title: `Assign classes for new student`,
-          description: `New student has registered with INACTIVE status and selected subjects. Please review and activate the account after assigning appropriate classes.`,
-          status: 'PENDING',
-          priority: 'HIGH',
-          related_to: 'STUDENT',
-          related_id: studentId
+      // Use the new secure function to add selected subjects
+      const { data, error } = await supabase
+        .rpc('student_select_subjects', {
+          p_student_id: studentId,
+          p_subject_ids: selectedSubjects
         })
 
-      if (taskError) throw taskError
-
-      // Don't clear localStorage yet, as we need it for the availability step
+      if (error) {
+        console.error('Error in student_select_subjects:', error);
+        throw error;
+      }
       
-      // Redirect to availability selection page instead of registration complete
-      router.push('/onboarding/availability')
+      if (!data.success) {
+        console.error('Function returned error:', data);
+        throw new Error(data.message || 'Failed to save subject selections');
+      }
+      
+      console.log('Successfully saved subjects:', data);
+      
+      // Check if we came from the dashboard (checking referrer)
+      const referrer = document.referrer;
+      if (referrer && referrer.includes('/dashboard')) {
+        // If coming from dashboard, redirect back there
+        router.push('/dashboard')
+      } else {
+        // Otherwise continue normal onboarding flow
+        router.push('/onboarding/availability')
+      }
     } catch (error) {
       console.error('Error saving subject data:', error)
-      setError(error.message)
+      setError(error.message || 'An error occurred while saving your subject selections. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -169,45 +265,53 @@ export default function SubjectSelection() {
       <div className="max-w-2xl mx-auto my-12 p-6 bg-white rounded-lg shadow-lg">
         <h1 className="text-2xl font-bold text-center mb-6 text-blue-800">Subject Selection</h1>
         
-        <div className="mb-6">
-          <div className="flex justify-between mb-4">
-            <div className="flex flex-col items-center">
-              <div className="rounded-full h-8 w-8 flex items-center justify-center bg-green-100 text-green-600">
-                ✓
+        {!isFromDashboard && (
+          <div className="mb-6">
+            <div className="flex justify-between mb-4">
+              <div className="flex flex-col items-center">
+                <div className="rounded-full h-8 w-8 flex items-center justify-center bg-green-100 text-green-600">
+                  ✓
+                </div>
+                <div className="text-xs mt-1 text-green-600 font-medium">Account Setup</div>
               </div>
-              <div className="text-xs mt-1 text-green-600 font-medium">Account Setup</div>
+              
+              <div className="flex flex-col items-center">
+                <div className="rounded-full h-8 w-8 flex items-center justify-center bg-green-100 text-green-600">
+                  ✓
+                </div>
+                <div className="text-xs mt-1 text-green-600 font-medium">Personal Info</div>
+              </div>
+              
+              <div className="flex flex-col items-center">
+                <div className="rounded-full h-8 w-8 flex items-center justify-center bg-blue-100 text-blue-600">
+                  3
+                </div>
+                <div className="text-xs mt-1 text-blue-600 font-medium">Subjects</div>
+              </div>
+              
+              <div className="flex flex-col items-center">
+                <div className="rounded-full h-8 w-8 flex items-center justify-center bg-gray-100 text-gray-400">
+                  4
+                </div>
+                <div className="text-xs mt-1 text-gray-400 font-medium">Availability</div>
+              </div>
             </div>
             
-            <div className="flex flex-col items-center">
-              <div className="rounded-full h-8 w-8 flex items-center justify-center bg-green-100 text-green-600">
-                ✓
-              </div>
-              <div className="text-xs mt-1 text-green-600 font-medium">Personal Info</div>
+            <div className="relative h-2 bg-gray-200 rounded-full mt-2 mb-4">
+              <div className="absolute left-0 top-0 h-2 bg-blue-500 rounded-full" style={{ width: '75%' }}></div>
             </div>
             
-            <div className="flex flex-col items-center">
-              <div className="rounded-full h-8 w-8 flex items-center justify-center bg-blue-100 text-blue-600">
-                3
-              </div>
-              <div className="text-xs mt-1 text-blue-600 font-medium">Subjects</div>
-            </div>
-            
-            <div className="flex flex-col items-center">
-              <div className="rounded-full h-8 w-8 flex items-center justify-center bg-gray-100 text-gray-400">
-                4
-              </div>
-              <div className="text-xs mt-1 text-gray-400 font-medium">Availability</div>
-            </div>
+            <p className="text-center text-gray-600 text-sm">
+              Step 3 of 4 - Select your subjects
+            </p>
           </div>
-          
-          <div className="relative h-2 bg-gray-200 rounded-full mt-2 mb-4">
-            <div className="absolute left-0 top-0 h-2 bg-blue-500 rounded-full" style={{ width: '75%' }}></div>
+        )}
+        
+        {isFromDashboard && (
+          <div className="mb-6 p-4 bg-blue-50 text-blue-800 rounded">
+            <p>You need to select at least one subject before you can access your dashboard. Please choose the subjects you're interested in studying.</p>
           </div>
-          
-          <p className="text-center text-gray-600 text-sm">
-            Step 3 of 4 - Select your subjects
-          </p>
-        </div>
+        )}
         
         {error && (
           <div className="mb-6 p-3 bg-red-100 text-red-700 rounded">
@@ -222,6 +326,43 @@ export default function SubjectSelection() {
         {filteredSubjects.length === 0 ? (
           <div className="p-4 bg-yellow-50 text-yellow-700 rounded mb-4">
             <p>No subjects found for your selected curriculum and year level. Please contact support for assistance.</p>
+            <button 
+              onClick={() => {
+                // Reset error and try to fetch subjects again
+                setError(null);
+                // Force refetch
+                const fetchSubjectsNow = async () => {
+                  try {
+                    console.log('Retrying subject fetch using RPC...');
+                    const { data, error } = await supabase.rpc(
+                      'get_subjects_for_student',
+                      {
+                        p_curriculum: curriculum,
+                        p_year_level: parseInt(yearLevel)
+                      }
+                    );
+                    
+                    if (error) {
+                      console.error('Error in retry fetch:', error);
+                      setError('Failed to load subjects. Please try again.');
+                      return;
+                    }
+                    
+                    console.log(`Retry successful! Fetched ${data?.length || 0} subjects`);
+                    setSubjects(data || []);
+                    setFilteredSubjects(data || []);
+                  } catch (err) {
+                    console.error('Error in retry attempt:', err);
+                    setError('Failed to load subjects. Please try again.');
+                  }
+                };
+                
+                fetchSubjectsNow();
+              }}
+              className="mt-3 px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded"
+            >
+              Retry Loading Subjects
+            </button>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-8">
@@ -260,19 +401,28 @@ export default function SubjectSelection() {
         )}
         
         <div className="flex justify-between mt-8">
-          <Link
-            href="/onboarding/personal-info"
-            className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50"
-          >
-            Back
-          </Link>
+          {!isFromDashboard ? (
+            <Link
+              href="/onboarding/personal-info"
+              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50"
+            >
+              Back
+            </Link>
+          ) : (
+            <button
+              onClick={() => router.push('/dashboard')}
+              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+          )}
           <button
             type="button"
             onClick={handleSubmitSubjects}
             disabled={loading || selectedSubjects.length === 0}
             className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
           >
-            {loading ? 'Saving...' : 'Continue to Availability'}
+            {loading ? 'Saving...' : isFromDashboard ? 'Save and Return to Dashboard' : 'Continue to Availability'}
           </button>
         </div>
       </div>

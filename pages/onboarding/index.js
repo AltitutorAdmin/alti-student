@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
-import { useSupabaseClient } from '@supabase/auth-helpers-react'
+import { useSupabaseClient, useSession } from '@supabase/auth-helpers-react'
 import { Formik, Form, Field, ErrorMessage } from 'formik'
 import * as Yup from 'yup'
 import Head from 'next/head'
@@ -22,8 +22,21 @@ const AccountSchema = Yup.object().shape({
 export default function Onboarding() {
   const router = useRouter()
   const supabase = useSupabaseClient()
+  const session = useSession()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+
+  // Check if user is already logged in and redirect to personal-info step
+  useEffect(() => {
+    if (session && session.user) {
+      // Store user ID and email in localStorage for next steps
+      localStorage.setItem('onboardingUserId', session.user.id)
+      localStorage.setItem('onboardingEmail', session.user.email)
+      
+      // Redirect to next step
+      router.push('/onboarding/personal-info')
+    }
+  }, [session, router])
 
   const handleAccountCreation = async (values, { setSubmitting }) => {
     setLoading(true)
@@ -83,6 +96,18 @@ export default function Onboarding() {
       setLoading(false)
       setSubmitting(false)
     }
+  }
+
+  // If user is already logged in, show a loading state
+  if (session) {
+    return (
+      <div className="max-w-md mx-auto my-12 p-6 bg-white rounded-lg shadow-lg">
+        <div className="text-center">
+          <p className="text-gray-600 mb-4">You're already logged in</p>
+          <p className="text-gray-600">Redirecting to the next step...</p>
+        </div>
+      </div>
+    )
   }
 
   return (

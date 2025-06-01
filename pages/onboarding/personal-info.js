@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/router'
-import { useSupabaseClient } from '@supabase/auth-helpers-react'
+import { useSupabaseClient, useSession } from '@supabase/auth-helpers-react'
 import { Formik, Form, Field, ErrorMessage } from 'formik'
 import * as Yup from 'yup'
 import Head from 'next/head'
@@ -22,14 +22,54 @@ const PersonalInfoSchema = Yup.object().shape({
 export default function PersonalInfo() {
   const router = useRouter()
   const supabase = useSupabaseClient()
+  const session = useSession()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [userId, setUserId] = useState(null)
   const [email, setEmail] = useState('')
 
-  // Load user ID from localStorage
+  // Load user ID from localStorage or session
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      // If we have a session, use it
+      if (session && session.user) {
+        setUserId(session.user.id)
+        setEmail(session.user.email)
+        // Also store in localStorage for other steps
+        localStorage.setItem('onboardingUserId', session.user.id)
+        localStorage.setItem('onboardingEmail', session.user.email)
+        
+        // Check if student record already exists for this user
+        const checkExistingStudent = async () => {
+          try {
+            const { data: existingStudent, error } = await supabase
+              .from('students')
+              .select('id')
+              .eq('user_id', session.user.id)
+              .eq('student_email', session.user.email)
+              .single();
+              
+            if (error && error.code !== 'PGRST116') {
+              console.error('Error checking existing student:', error);
+              return;
+            }
+            
+            // If student record exists, store the ID and skip to subject selection
+            if (existingStudent && existingStudent.id) {
+              console.log('Student record already exists, skipping to subject selection');
+              localStorage.setItem('onboardingStudentId', existingStudent.id);
+              router.push('/onboarding/subject-selection');
+            }
+          } catch (err) {
+            console.error('Error in checkExistingStudent:', err);
+          }
+        };
+        
+        checkExistingStudent();
+        return;
+      }
+      
+      // Otherwise fall back to localStorage
       const storedUserId = localStorage.getItem('onboardingUserId')
       const storedEmail = localStorage.getItem('onboardingEmail')
       
@@ -40,8 +80,36 @@ export default function PersonalInfo() {
       
       setUserId(storedUserId)
       setEmail(storedEmail)
+      
+      // Check if student record already exists for the stored user
+      const checkExistingStudent = async () => {
+        try {
+          const { data: existingStudent, error } = await supabase
+            .from('students')
+            .select('id')
+            .eq('user_id', storedUserId)
+            .eq('student_email', storedEmail)
+            .single();
+            
+          if (error && error.code !== 'PGRST116') {
+            console.error('Error checking existing student:', error);
+            return;
+          }
+          
+          // If student record exists, store the ID and skip to subject selection
+          if (existingStudent && existingStudent.id) {
+            console.log('Student record already exists, skipping to subject selection');
+            localStorage.setItem('onboardingStudentId', existingStudent.id);
+            router.push('/onboarding/subject-selection');
+          }
+        } catch (err) {
+          console.error('Error in checkExistingStudent:', err);
+        }
+      };
+      
+      checkExistingStudent();
     }
-  }, [router])
+  }, [router, session, supabase])
 
   const handlePersonalInfoSubmit = async (values, { setSubmitting }) => {
     setLoading(true)
@@ -55,7 +123,7 @@ export default function PersonalInfo() {
       // Check if the email is already used by another student
       const { data: existingStudents, error: checkError } = await supabase
         .from('students')
-        .select('id, first_name, last_name')
+        .select('id, first_name, last_name, user_id')
         .eq('student_email', email)
 
       if (checkError) {
@@ -64,7 +132,19 @@ export default function PersonalInfo() {
 
       // If we found an existing student with this email
       if (existingStudents && existingStudents.length > 0) {
-        throw new Error(`A student account with email ${email} already exists. Please use a different email.`)
+        // Check if it belongs to the current user
+        const ownedStudent = existingStudents.find(student => student.user_id === userId);
+        
+        if (ownedStudent) {
+          // This is our student, store ID and proceed to next step
+          console.log('Using existing student record:', ownedStudent.id);
+          localStorage.setItem('onboardingStudentId', ownedStudent.id);
+          router.push('/onboarding/subject-selection');
+          return;
+        } else {
+          // The email is used by another user's student record
+          throw new Error(`A student account with email ${email} already exists. Please use a different email.`)
+        }
       }
 
       // Debug logging

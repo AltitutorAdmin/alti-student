@@ -14,9 +14,11 @@ export default function RegistrationComplete() {
       router.push('/login')
     }
     
-    // Clear the studentId from localStorage since we're done with onboarding
+    // Clear onboarding data from localStorage since we're done with onboarding
     if (typeof window !== 'undefined') {
-      localStorage.removeItem('studentId')
+      localStorage.removeItem('onboardingStudentId')
+      localStorage.removeItem('onboardingUserId')
+      localStorage.removeItem('onboardingEmail')
     }
   }, [session, router])
 
