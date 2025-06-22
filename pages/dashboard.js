@@ -133,20 +133,54 @@ export default function Dashboard() {
       setSubjectsLoading(true)
       setSubjectsError(null)
       
+      // Handle special curriculum naming rules
+      let filterCurriculum = student.curriculum;
+      
+      // For SACE, years below 11 should be treated as "PRESACE" (no hyphen)
+      if (student.curriculum === 'SACE' && parseInt(student.year_level) < 11) {
+        filterCurriculum = 'PRESACE';
+      }
+      
+      console.log(`Fetching subjects for ${filterCurriculum} Year ${student.year_level}`);
+      
       // Fetch subjects that match the student's curriculum and year level
       const { data, error } = await supabase
         .from('subjects')
         .select('*')
-        .eq('curriculum', student.curriculum)
+        .eq('curriculum', filterCurriculum)
         .eq('year_level', student.year_level)
-        .order('name', { ascending: true })
+        .order('name', { ascending: true });
       
-      if (error) throw error
+      if (error) {
+        console.error('Error fetching subjects:', error);
+        throw error;
+      }
       
-      setAvailableSubjects(data || [])
+      if (data && data.length > 0) {
+        console.log(`Found ${data.length} subjects for ${filterCurriculum} Year ${student.year_level}`);
+        setAvailableSubjects(data);
+      } else {
+        console.log(`No subjects found for ${filterCurriculum} Year ${student.year_level}, trying case-insensitive search`);
+        
+        // Try case-insensitive search if no results
+        const { data: iLikeData, error: iLikeError } = await supabase
+          .from('subjects')
+          .select('*')
+          .ilike('curriculum', filterCurriculum)
+          .eq('year_level', student.year_level)
+          .order('name', { ascending: true });
+          
+        if (iLikeError) {
+          console.error('Error in case-insensitive search:', iLikeError);
+          throw iLikeError;
+        }
+        
+        console.log(`Found ${iLikeData?.length || 0} subjects with case-insensitive search`);
+        setAvailableSubjects(iLikeData || []);
+      }
     } catch (error) {
       console.error('Error fetching available subjects:', error)
-      setSubjectsError(error.message)
+      setSubjectsError(error.message || 'Failed to load subjects')
     } finally {
       setSubjectsLoading(false)
     }
@@ -774,7 +808,19 @@ export default function Dashboard() {
                         </p>
                         <div className="max-h-80 overflow-y-auto pr-1">
                           {availableSubjects.length === 0 ? (
-                            <p className="text-gray-500 text-sm py-2">No subjects available for your curriculum and year level.</p>
+                            <div className="p-3 bg-yellow-50 text-yellow-700 rounded">
+                              <p className="font-medium mb-1">No subjects available for your curriculum and year level.</p>
+                              <p className="text-sm">
+                                {student.curriculum === 'SACE' && parseInt(student.year_level) < 11 ? (
+                                  `We're currently setting up PRESACE Year ${student.year_level} subjects.`
+                                ) : student.curriculum === 'IB' && (parseInt(student.year_level) < 11 || parseInt(student.year_level) > 12) ? (
+                                  `IB curriculum is only available for Years 11 and 12.`
+                                ) : (
+                                  `We're currently setting up ${student.curriculum} Year ${student.year_level} subjects.`
+                                )}
+                              </p>
+                              <p className="text-sm mt-1">Please contact support if you need assistance.</p>
+                            </div>
                           ) : (
                             <ul className="divide-y divide-gray-100">
                               {availableSubjects.map((subject) => (
@@ -826,7 +872,8 @@ export default function Dashboard() {
                             <div className="mt-1 flex flex-wrap">
                               {item.subjects.curriculum && (
                                 <span className="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded mr-1 mb-1">
-                                  {item.subjects.curriculum}
+                                  {item.subjects.curriculum === 'PRESACE' ? 'SACE' : item.subjects.curriculum}
+                                  {item.subjects.year_level && ` Year ${item.subjects.year_level}`}
                                 </span>
                               )}
                               {item.subjects.discipline && (

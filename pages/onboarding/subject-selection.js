@@ -64,21 +64,61 @@ export default function SubjectSelection() {
           yearLevel: data.year_level
         });
         
-        // Try fetching via RPC
-        const { data: subjectData, error: subjectError } = await supabase.rpc(
-          'get_subjects_for_student',
-          {
-            p_curriculum: data.curriculum,
-            p_year_level: parseInt(data.year_level)
-          }
-        );
+        // Try fetching via direct table access first
+        let filterCurriculum = data.curriculum;
         
-        if (subjectError) {
-          console.error('Error fetching subjects via RPC after student data load:', subjectError);
-        } else {
-          console.log(`Fetched ${subjectData?.length || 0} subjects via RPC after student data load`);
-          setSubjects(subjectData || []);
-          setFilteredSubjects(subjectData || []);
+        // For SACE, years below 11 should be treated as "PRESACE" (no hyphen)
+        if (data.curriculum === 'SACE' && parseInt(data.year_level) < 11) {
+          filterCurriculum = 'PRESACE';
+        }
+        
+        const { data: directSubjects, error: directError } = await supabase
+          .from('subjects')
+          .select('*')
+          .eq('curriculum', filterCurriculum)
+          .eq('year_level', parseInt(data.year_level))
+          .order('name', { ascending: true });
+          
+        if (!directError && directSubjects && directSubjects.length > 0) {
+          console.log(`Fetched ${directSubjects.length} subjects via direct table access`);
+          setSubjects(directSubjects);
+          setFilteredSubjects(directSubjects);
+          return;
+        }
+        
+        // If direct access fails or returns no results, try using the RPC function
+        try {
+          const { data: subjectData, error: subjectError } = await supabase.rpc(
+            'get_subjects_for_student',
+            {
+              p_curriculum: filterCurriculum,
+              p_year_level: parseInt(data.year_level)
+            }
+          );
+          
+          if (subjectError) {
+            console.error('Error fetching subjects via RPC after student data load:', subjectError);
+            
+            // If RPC fails, try one more direct query with case-insensitive search
+            const { data: iLikeSubjects, error: iLikeError } = await supabase
+              .from('subjects')
+              .select('*')
+              .ilike('curriculum', filterCurriculum)
+              .eq('year_level', parseInt(data.year_level))
+              .order('name', { ascending: true });
+              
+            if (!iLikeError && iLikeSubjects && iLikeSubjects.length > 0) {
+              console.log(`Fetched ${iLikeSubjects.length} subjects via case-insensitive query`);
+              setSubjects(iLikeSubjects);
+              setFilteredSubjects(iLikeSubjects);
+            }
+          } else {
+            console.log(`Fetched ${subjectData?.length || 0} subjects via RPC after student data load`);
+            setSubjects(subjectData || []);
+            setFilteredSubjects(subjectData || []);
+          }
+        } catch (rpcError) {
+          console.error('Exception in RPC call:', rpcError);
         }
       }
     } catch (error) {
@@ -92,42 +132,57 @@ export default function SubjectSelection() {
     async function fetchSubjects() {
       try {
         console.log('Fetching subjects...');
+        
+        // First try to get all subjects directly
         const { data, error } = await supabase
           .from('subjects')
           .select('*')
-          .order('name', { ascending: true })
+          .order('name', { ascending: true });
 
         if (error) {
           console.error('Error fetching subjects via direct table access:', error);
-          
-          // If direct access fails, try using the RPC function
-          if (curriculum && yearLevel) {
-            console.log('Trying alternative method using RPC function...');
-            const { data: rpcData, error: rpcError } = await supabase.rpc(
-              'get_subjects_for_student',
-              {
-                p_curriculum: curriculum,
-                p_year_level: parseInt(yearLevel)
-              }
-            );
-            
-            if (rpcError) {
-              console.error('Error fetching subjects via RPC:', rpcError);
-              throw rpcError;
-            }
-            
-            console.log(`Successfully fetched ${rpcData?.length || 0} subjects via RPC`);
-            setSubjects(rpcData || []);
-            // Since we already filtered by curriculum and year level in the RPC
-            setFilteredSubjects(rpcData || []);
-            return;
-          } else {
-            throw error;
-          }
+          setError('Failed to load subjects. Please try again.');
+          return;
         }
         
         console.log(`Successfully fetched ${data?.length || 0} subjects`);
-        setSubjects(data || [])
+        setSubjects(data || []);
+        
+        // If we have curriculum and year level, filter the subjects client-side
+        if (curriculum && yearLevel && data) {
+          console.log(`Filtering ${data.length} subjects for ${curriculum} Year ${yearLevel}`);
+          
+          // For SACE, years below 11 should be treated as "PRESACE" (no hyphen)
+          let filterCurriculum = curriculum;
+          if (curriculum === 'SACE' && parseInt(yearLevel) < 11) {
+            filterCurriculum = 'PRESACE';
+          }
+          
+          const filtered = data.filter(subject => {
+            // For IB, only show years 11 and 12
+            if (curriculum.toUpperCase() === 'IB' && 
+                (subject.year_level < 11 || subject.year_level > 12)) {
+              return false;
+            }
+            
+            // For SACE, handle PRESACE for years below 11
+            if (curriculum === 'SACE' && parseInt(yearLevel) < 11) {
+              // Look for PRESACE subjects (no hyphen)
+              const curriculumMatch = subject.curriculum?.toUpperCase() === 'PRESACE';
+              const yearLevelMatch = subject.year_level === parseInt(yearLevel);
+              return curriculumMatch && yearLevelMatch;
+            }
+            
+            // Standard case - match curriculum and year level
+            const curriculumMatch = subject.curriculum?.toUpperCase() === curriculum?.toUpperCase();
+            const yearLevelMatch = subject.year_level === parseInt(yearLevel);
+            
+            return curriculumMatch && yearLevelMatch;
+          });
+          
+          console.log(`Found ${filtered.length} matching subjects after client-side filtering`);
+          setFilteredSubjects(filtered);
+        }
         
         // Check for existing subject selections
         if (studentId) {
@@ -166,9 +221,31 @@ export default function SubjectSelection() {
         availableYearLevels: [...new Set(subjects.map(s => s.year_level))]
       });
       
+      // Handle special curriculum naming rules
+      let filterCurriculum = curriculum;
+      
+      // For SACE, years below 11 should be treated as "PRESACE" (no hyphen)
+      if (curriculum === 'SACE' && parseInt(yearLevel) < 11) {
+        filterCurriculum = 'PRESACE';
+      }
+      
       const filtered = subjects.filter(
         (subject) => {
-          // Case-insensitive curriculum comparison and ensure year_level is treated as a number
+          // For IB, only show years 11 and 12
+          if (subject.curriculum?.toUpperCase() === 'IB' && 
+              (subject.year_level < 11 || subject.year_level > 12)) {
+            return false;
+          }
+          
+          // For SACE, handle PRESACE for years below 11
+          if (curriculum === 'SACE' && parseInt(yearLevel) < 11) {
+            // Look for PRESACE subjects (no hyphen)
+            const curriculumMatch = subject.curriculum?.toUpperCase() === 'PRESACE';
+            const yearLevelMatch = subject.year_level === parseInt(yearLevel);
+            return curriculumMatch && yearLevelMatch;
+          }
+          
+          // Standard case - match curriculum and year level
           const curriculumMatch = subject.curriculum?.toUpperCase() === curriculum?.toUpperCase();
           const yearLevelMatch = subject.year_level === parseInt(yearLevel);
           
@@ -325,44 +402,32 @@ export default function SubjectSelection() {
         
         {filteredSubjects.length === 0 ? (
           <div className="p-4 bg-yellow-50 text-yellow-700 rounded mb-4">
-            <p>No subjects found for your selected curriculum and year level. Please contact support for assistance.</p>
-            <button 
-              onClick={() => {
-                // Reset error and try to fetch subjects again
-                setError(null);
-                // Force refetch
-                const fetchSubjectsNow = async () => {
-                  try {
-                    console.log('Retrying subject fetch using RPC...');
-                    const { data, error } = await supabase.rpc(
-                      'get_subjects_for_student',
-                      {
-                        p_curriculum: curriculum,
-                        p_year_level: parseInt(yearLevel)
-                      }
-                    );
-                    
-                    if (error) {
-                      console.error('Error in retry fetch:', error);
-                      setError('Failed to load subjects. Please try again.');
-                      return;
-                    }
-                    
-                    console.log(`Retry successful! Fetched ${data?.length || 0} subjects`);
-                    setSubjects(data || []);
-                    setFilteredSubjects(data || []);
-                  } catch (err) {
-                    console.error('Error in retry attempt:', err);
-                    setError('Failed to load subjects. Please try again.');
+            <p className="font-medium">No subjects found for your selected curriculum and year level.</p>
+            <p className="mt-2">
+              {curriculum === 'SACE' && parseInt(yearLevel) < 11 ? (
+                `We're currently setting up PRESACE Year ${yearLevel} subjects.`
+              ) : curriculum === 'IB' && (parseInt(yearLevel) < 11 || parseInt(yearLevel) > 12) ? (
+                `IB curriculum is only available for Years 11 and 12.`
+              ) : (
+                `We're currently setting up ${curriculum} Year ${yearLevel} subjects.`
+              )}
+              {' '}Please continue with the onboarding process, and we'll assign appropriate subjects to you later.
+            </p>
+            <div className="mt-4 flex justify-center">
+              <button 
+                onClick={() => {
+                  // Skip subject selection for now
+                  if (isFromDashboard) {
+                    router.push('/dashboard');
+                  } else {
+                    router.push('/onboarding/availability');
                   }
-                };
-                
-                fetchSubjectsNow();
-              }}
-              className="mt-3 px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded"
-            >
-              Retry Loading Subjects
-            </button>
+                }}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded"
+              >
+                {isFromDashboard ? 'Return to Dashboard' : 'Continue to Availability'}
+              </button>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-8">
@@ -416,14 +481,16 @@ export default function SubjectSelection() {
               Cancel
             </button>
           )}
-          <button
-            type="button"
-            onClick={handleSubmitSubjects}
-            disabled={loading || selectedSubjects.length === 0}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
-          >
-            {loading ? 'Saving...' : isFromDashboard ? 'Save and Return to Dashboard' : 'Continue to Availability'}
-          </button>
+          {filteredSubjects.length > 0 && (
+            <button
+              type="button"
+              onClick={handleSubmitSubjects}
+              disabled={loading || selectedSubjects.length === 0}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg disabled:opacity-50"
+            >
+              {loading ? 'Saving...' : isFromDashboard ? 'Save and Return to Dashboard' : 'Continue to Availability'}
+            </button>
+          )}
         </div>
       </div>
     </>
